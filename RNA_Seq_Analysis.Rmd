@@ -1,0 +1,353 @@
+---
+title: "RNA-Seq Data Analysis of Tumor Vs Normal"
+author: "Ranjan Jyoti Sarma, PhD"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+##Rmarkdown
+##RNA_Seq Analysis::DEG
+```{r Set_Working_Directory, include=FALSE}
+setwd("Path/To/Working/Directory")
+getwd()
+```
+
+
+
+#Loading the resquired Libraries
+```{r Loading R Libraries}
+library("BiocManager")
+library("DESeq2")
+```
+
+
+
+#Reading Meta Data
+```{r Loading Meta Data}
+m_data = read.table("metadata.txt", header=TRUE)
+sample_table = m_data[, c("Sample_ID", "Condition")]
+sample_table$Condition = as.factor(sample_table$Condition)
+#sample_table$Condition <- relevel(sample_table$Condition, ref = "Control")
+sample_table
+```
+
+
+#Reading Count Data
+```{r Loading_Count_Matrix}
+counts = count_data <- read.table("Raw_counts.txt", header=TRUE, row.names = 1)
+count_matrix <- as.matrix(round(counts))
+coldata <- data.frame(row.names = colnames(count_matrix), Condition = sample_table$Condition)
+```
+
+
+
+#Creating DESeq2 object
+```{r DESeq dds Object}
+dds <- DESeqDataSetFromMatrix(countData = count_matrix, colData = coldata, design = ~Condition)
+dds$Condition <- relevel(dds$Condition, ref = "Control") #Important Step to estimate correct Log2FC.
+colnames(colData(dds))
+```
+
+
+
+#Manual Check ppoint#2
+```{r optional check 1}
+head(dds)
+head(assay(dds))
+```
+
+
+
+#Manual Check point#3
+```{r Optional Check 2}
+head(assay(dds), 3)
+```
+
+
+
+##Filtering Low Count so as to avoid low expressed genes 
+##keep only those genes with raw counts greater or equal 15 to eleminate very lowly expressed genes
+```{r Filtering Step1 }
+keep=rowSums(counts(dds)) >= 5
+```
+
+
+
+
+#Checking 'keep' object to see genes matching the filtering criteria (counts greater than 5).
+```{r Check Keep object}
+head(keep, 5)
+```
+
+
+
+#Keep only the counts greater than 15 counts, Applying Criteria on dds object and transforming to hdds (Filtered) object. Original dds object is intact.
+```{r Applying Filtering Criteria, avoiding low expressed genes}
+hdds = dds[keep, ]
+```
+
+
+
+
+```{r Check before Nomalization}
+
+print(paste("The number of transcripts with low expression (count < 10) removed = ", nrow(assay(dds)) - nrow(assay(hdds))))
+print(paste("Number of transcripts remained in 'hdds' object after filtration= ", nrow(assay(hdds))))
+```
+
+
+
+
+# Normalization and Measuring DEx
+```{r Normalization and Differential Epression Measure}
+new_hdds=DESeq(hdds)
+```
+
+
+
+
+#Manual check point#5
+```{r Check hdds Object}
+head(assay(new_hdds))
+```
+
+
+
+#Write the Normalised Counts of the genes in a file
+```{r Saving the normalized counts}
+write.csv(counts(new_hdds, normalized = T), file="NormalisedCount.csv", row.names = TRUE)
+```
+
+
+
+
+```{r Results of DEx analysis}
+#Obtaining the results of differential expression analysis
+results = results(new_hdds)
+```
+
+
+
+#Extracting top 50 Differentially Expressed genes
+```{r Top-50 Genes}
+
+#Ordering the results
+results_Ordered = results[order(results$pvalue), ]
+results_table=data.frame(results_Ordered)
+
+#Total rows in results_table
+original_number = nrow(results_table)
+
+
+#count how many NAs in padj (FDR corrected p-value  for multiple testing)
+na_count <- sum(is.na(results_table$padj))
+remains = original_number - na_count
+
+ 
+# Removing rows where the 'padj' column has missing values (NA)
+results_table_no_na=results_table[!is.na(results_table$padj),]
+head(results_table_no_na)
+after_removed_na = nrow(results_table_no_na)
+
+
+if (remains == after_removed_na) {
+  print("Rows with 'padj' with NAs are removed to avoid error in  downstream analysis/Vizualitation.") 
+  print(paste("Number of NAs removed:",na_count))
+  print(paste("Number of reamaining genes:", remains))
+} else {
+  print("WARNING:::Rows with 'padj' with NAs are not removed.")
+}
+
+
+#Criteria Given p_value < 0.05 and absolute log2FoldChange >1
+sig_genes = subset(results_table_no_na, pvalue < 0.05)
+
+top50 = head(sig_genes, 50)
+non_sig = subset(results_table_no_na, pvalue > 0.05)
+
+nrow(non_sig)
+
+num_sig_genes = nrow(sig_genes)
+print(paste("Number of Significant DEGs :", num_sig_genes))
+
+```
+
+#Adding HUGO gene symbole instead of Ensembl IDs which come from GTF file during feature/gene count.
+```{r Adding Gene Name to the genes}
+library(biomaRt)
+#Assuming the datasets belong to Human, using gene sets of homo sapiens
+ensembl=useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl")
+all_genes=getBM(attributes=c('ensembl_gene_id', 'external_gene_name'),mart=ensembl)
+rownames(all_genes)=all_genes$ensembl_gene_id
+top50$gene_name=all_genes[rownames(top50),2]
+sig_genes$gene_name=all_genes[rownames(sig_genes),2]
+results_table$gene_name=all_genes[rownames(results_table),2]
+results_table_no_na$gene_name=all_genes[rownames(results_table_no_na),2]
+head(sig_genes)
+final_list_50=top50
+write.csv(final_list_50, file="Top50_DEGs.csv", row.names = TRUE)
+write.table(final_list_50, file="temp_sig_50.txt", sep = ",")
+```
+
+
+
+#Getting Genes with Absolute log2FC >1
+```{r abs Log2FoldChange >1}
+abs_lfc_gt_1 = subset(top50,  abs(top50$log2FoldChange) > 1)
+
+num_abs_lfc_gt_1 = nrow(abs_lfc_gt_1)
+print(paste("The number of gene of p value < 0.05 and absolute Log2FC> 1:", num_abs_lfc_gt_1))
+abs = abs_lfc_gt_1[, c(7,2,3,4,5,6)]
+print(abs)
+write.csv(abs, file="Absolute_log2FoldChange_gt_1.csv", row.names = TRUE)
+```
+
+
+
+#Create Directory to save the plots
+```{r Plot Directory}
+dir.create("Plots")
+```
+
+
+
+#Visualization 1
+```{r Labelled PCA Plot to undestand the variance among the replicates. Quality check before going to downstream interpretation}
+library("ggplot2")
+library("ggrepel")
+vsd=vst(new_hdds, blind=FALSE)
+vsd_data=(assay(vsd))
+head(vsd)
+sample = sample_table$Sample_ID
+sample
+
+pca_data = plotPCA(vsd,intgroup="Condition")+geom_text_repel(aes(label=sample))
+#Save the plot
+pca_data
+ggsave(filename = "Plots/PCA_Plot.tiff", plot = pca_data, width = 6, height = 4, units = "in", dpi = 500)
+```
+
+
+
+#Visualization 2
+#bi-clustered HeatMap considering all the 
+```{r bi-clustered HeatMap}
+head(vsd_data)
+
+#
+matched_genes1 <- vsd_data[rownames(vsd_data) %in% rownames(top50), ]
+print(matched_genes1)
+nrow(matched_genes1)
+
+
+#matching the only logfc>1 genes
+matched_genes2 <- vsd_data[rownames(vsd_data) %in% rownames(abs_lfc_gt_1), ]
+print(matched_genes2)
+nrow(matched_genes2)
+
+
+
+#Replacing sig genes with Log2FC> 1 ensemble IDs with Gene Name
+ensemble_ids1 = row.names(top50)
+ensemble_ids2 = row.names(abs_lfc_gt_1)
+
+print(ensemble_ids1)
+print(ensemble_ids2)
+
+
+target1 = row.names(matched_genes1)
+target2 = row.names(matched_genes2)
+
+
+ensembl_to_gene_name_map1 = setNames(top50$gene_name, row.names(matched_genes1))
+ensembl_to_gene_name_map1
+
+ensembl_to_gene_name_map2 = setNames(abs_lfc_gt_1$gene_name, row.names(matched_genes2))
+ensembl_to_gene_name_map2
+
+
+rownames(matched_genes1) = ensembl_to_gene_name_map1[rownames(matched_genes1)]
+matched_genes1
+write.csv(matched_genes1, file="selected_top50_for_heat_map.csv", row.names = TRUE)
+
+
+rownames(matched_genes2) = ensembl_to_gene_name_map2[rownames(matched_genes2)]
+matched_genes2
+write.csv(matched_genes2, file="selected_logfc_gt_1_for_heat_map.csv", row.names = TRUE)
+
+
+
+my_data1 = read.csv("selected_top50_for_heat_map.csv")
+my_data2 = read.csv("selected_logfc_gt_1_for_heat_map.csv")
+colnames(my_data1)[1] <- "Gene"
+colnames(my_data2)[1] <- "Gene"
+write.csv(my_data1, file="Significant_Top50_genes_accross_the_samples.csv", row.names=FALSE)
+write.csv(my_data2, file="Significant_genes_logfc_gt_1_accross_the_samples.csv", row.names=FALSE)
+
+
+
+df <- as.data.frame(colData(vsd))
+head(df)
+
+
+
+my_data1 <- read.csv("selected_top50_for_heat_map.csv")
+colnames(my_data1)[1] <- "Gene"
+mat1 <- my_data1[, -1]
+gene_names1 <- my_data1[, 1]
+head(gene_names1)
+
+library(pheatmap)
+heatmap_data1 = pheatmap(mat1, annotation_col = df, labels_row = gene_names1, cluster_cols = TRUE, cuttree_rows = 4, cuttree_cols = 4, annotation_row_names = TRUE,width = 20, height = 5, fontsize = 3)
+ggsave(filename ="Plots/heat_map_top50.tiff", plot = heatmap_data1, width = 6, height = 4, units = "in", dpi = 500)
+
+
+
+
+my_data2 <- read.csv("selected_logfc_gt_1_for_heat_map.csv")
+colnames(my_data2)[1] <- "Gene"
+mat2 <- my_data2[, -1]
+gene_names2 <- my_data2[, 1]
+head(gene_names2)
+
+
+heatmap_data2 = pheatmap(mat2, annotation_col = df, labels_row = gene_names2, cluster_cols = TRUE, cuttree_rows = 4, cuttree_cols = 4, annotation_row_names = TRUE,width = 20, height = 5, fontsize = 3)
+ggsave(filename ="Plots/heat_map_logfc_gt_1.tiff", plot = heatmap_data2, width = 6, height = 4, units = "in", dpi = 500)
+
+
+```
+
+
+
+
+#Visualization 3
+```{r VolcanoPlot}
+
+
+#Extracting Log2FC, pvalue and Gene_name
+
+plotting_table=results_table_no_na[ ,c(2,5,7)]
+print(plotting_table)
+de=plotting_table
+print(de)
+
+# Creating a new column 'dge' filled with NA
+de$dge <- "NA"
+print(de)
+
+
+de$dge[abs(de$log2FoldChange) < 1] <- "Log2FC<1"
+de$dge[de$pvalue < 0.05 & abs(de$log2FoldChange) > 1] <- "p-Value < 0.05 (Log2FC>1)"
+de$dge[de$pvalue > 0.05 ] <- "Not Significant"
+
+
+
+p1 <- ggplot(data=de, aes(x=log2FoldChange, y=-log10(pvalue), col=dge)) + geom_point()
+
+
+#From the top 50 DEGs, as the it was ordered and the last p-value was almost '0.00000024', Let's make the y intercept at that point. 
+#Let us label only the gene which absolute Log2FC >1 and p-value <0.05.
+#The genes above the Y Intercept (Red in Colour) fall within top 50
+p2 <- p1 + geom_vline(xintercept=c(-1, 1), col="blue") + geom_hline(yintercept=-log10(0.00000024), col="red") +geom_text_repel(data = subset(de, pvalue < 0.05 & abs(log2FoldChange) > 1), aes(label = gene_name), nudge_x = 0.5, nudge_y = 0.5)
+ggsave(filename ="Plots/Volcano_Plot.tiff", plot = p2, width = 6, height = 4, units = "in", dpi = 500)
+```
