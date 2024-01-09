@@ -34,7 +34,7 @@ sample_table
 
 #Reading Count Data
 ```{r Loading_Count_Matrix}
-counts = count_data <- read.table("Raw_counts.txt", header=TRUE, row.names = 1)
+count_data <- read.table("Raw_counts.txt", header=TRUE, row.names = 1)
 count_matrix <- as.matrix(round(counts))
 coldata <- data.frame(row.names = colnames(count_matrix), Condition = sample_table$Condition)
 ```
